@@ -32,13 +32,16 @@ def train_and_score( classifier, class_args, train, train_l, test, test_l ):
 
     print 'validation score %lf'%cl.score( test, test_l )
 
+def print_preds_to_csv( preds, filename ):
+    with csv.writer( open( filename, 'wb' ) ) as writer:
+        for i in xrange(preds.shape[0]):
+            writer.writerow([i,preds[i]])
+
 if __name__=='__main__':
     print __doc__
 
 
     labels, train, test = pp.load_from_csv( sys.argv[1], sys.argv[2] )
-
-
 
     try:
 
@@ -46,11 +49,9 @@ if __name__=='__main__':
             print '\n...whitening and PCA-ing the data'
 
             pca = dec.PCA( whiten=True )
-
             pca.fit( train )
 
             train = pca.transform( train )
-            
             test = pca.transform( test )
 
             print """PCA'd and whitened data\n"""
@@ -60,7 +61,6 @@ if __name__=='__main__':
             print 'unrecognized option'
     
     except:
-
         pass
 
     kf = KFold( train.shape[0], k = 4 )

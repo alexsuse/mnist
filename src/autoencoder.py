@@ -94,8 +94,8 @@ class dA:
                 c = train_da(learning_rate = l_rate)
                 costs = [c]+costs
                 
-                print('Training epoch %d, cost %.5f,'
-                        'time %dsecs')%(epoch,c,time.clock()-epoch_time)
+#                print('Training epoch %d, cost %.5f,'
+#                        'time %dsecs')%(epoch,c,time.clock()-epoch_time)
                 costs = costs[:10]
 
                 rel_cost_change = (c-np.mean(costs))/np.abs(c)
@@ -229,15 +229,23 @@ class LogisticRegression(object):
 
     self.W
     '''
-    def __init__(self, n_in, n_out,lam=0.01, input=None):
+    def __init__(self, n_in, n_out,lam=0.01, input=None, W2 = None, b = None):
         if input is None:
             self.data = T.dmatrix('data')
         else:
             self.data = input
-        self.W = theano.shared(value=np.zeros((n_in, n_out),
-                                dtype=theano.config.floatX), name='W')
-        self.b = theano.shared(value=np.zeros((n_out,),
+        if W2 is None:
+            Wi = np.random.uniform( low=-3./n_in, high=3./n_in, size=(n_in, n_out) )
+            self.W = theano.shared(value=np.asarray( Wi,
+                                    dtype=theano.config.floatX), name='W')
+        else:
+            self.W = theano.shared(value = np.array(W2, dtype = theano.config.floatX), name = 'W')
+        if b is None:
+            bi = np.random.uniform( low=-1./n_out, high=1./n_out, size=(n_out,))
+            self.b = theano.shared(value=np.asarray( bi,
                                     dtype=theano.config.floatX), name='b')
+        else:
+            self.b = theano.shared( value = np.array(b, dtype = theano.config.floatX), name = 'b')
 
         self.p_y_given_x = T.nnet.softmax(T.dot(self.data, self.W) + self.b)
 
@@ -256,7 +264,7 @@ class LogisticRegression(object):
         train_x = theano.shared(value = np.asarray(train,dtype=theano.config.floatX), name = 'train_x')
         train_y = T.cast(theano.shared(value = np.asarray(label), name = 'train_y'),'int32')
         cost, updates = self.get_cost_and_updates(y,learning_rate)
-        print train_x.shape.eval()
+        
         if not isbatches:
             train_lr = theano.function([], cost,
                     updates = updates,
@@ -271,6 +279,7 @@ class LogisticRegression(object):
                 e = errors_train()
                 print "Training epoch %d gave cost %lf, errors %lf"%(epoch,np.mean(c),np.mean(e))
         else:
+            nbatches = train.shape[0]
             index = T.lscalar('index')
             train_lr = theano.function([index], cost,
                     updates = updates,
@@ -289,7 +298,8 @@ class LogisticRegression(object):
 
 
     def predict(self,x):
-        return self.get_predictions(x).eval()
+        p_y_given_x = self.get_predictions(x)
+        return T.argmax( p_y_given_x, axis = 1)
 
     def get_cost_and_updates(self, y, learning_rate):                                                                                                                             
         cost = self.negativeLL(y)+self.lam*T.mean(self.W*self.W)
@@ -328,16 +338,16 @@ class TwoLayerPerceptron(object):
 
         self.firstLayer = dA( n_vis, n_hidden, data = self.data, W1 = W_1_init, bh = b_1_init )
          
-        self.secondLayer = LogisticRegression( n_hidden, n_out, input=self.firstLayer.output )
+        self.secondLayer = LogisticRegression( n_hidden, n_out, input=self.firstLayer.output, W2 = W_2_init, b = b_2_init )
 
-        self.params = self.firstLayer.params + self.secondLayer.params
+        self.params = [self.firstLayer.W, self.firstLayer.b_h] + self.secondLayer.params
 
     def get_cost_and_updates(self, y, learning_rate = 1e-1):
         
-        cost = self.secondLayer.negativeLL( y )
+        cost = self.negativeLL( y )
 
         cost += self.lReg1*T.mean( T.sqr( self.firstLayer.W ) )\
-                +self.lReg2*T.mean( T.sqrt(self.secondLayer.W ) ) 
+                +self.lReg2*T.mean( T.sqr(self.secondLayer.W ) ) 
 
         grad = T.grad( cost, self.params )
 
@@ -346,4 +356,137 @@ class TwoLayerPerceptron(object):
         for param, gparam in zip(self.params,grad):
             updates.append( (param, param - learning_rate*gparam ) )
 
-        return cost, updates
+        return (cost, updates)
+
+    def predict( self, x ):
+        return self.secondLayer.predict( self.firstLayer.get_transform( x ) )
+
+    def negativeLL( self, y ):
+        p_y_given_x = self.secondLayer.get_predictions( self.firstLayer.get_transform( self.data ) )
+        return -T.mean( T.log( p_y_given_x )[T.arange(y.shape[0]), y])
+
+    def get_predictions( self, x ):
+        return self.secondLayer.get_predictions( self.firstLayer.get_transform( x ) )
+
+    def score( self, x, y ):
+        y_pred = self.predict( x )
+        return 1.0-T.mean( T.neq( y_pred, y ) ).eval()
+
+    def errors( self, x, y ):
+        y_pred = self.predict( x )
+        return T.mean(T.neq(y_pred, y))
+
+    def fit_and_validate( self, train, label_train, test, label_test, learning_rate=1e-4, training_epochs = 10000 ):
+        """
+        fits MLP with two layers, checking the validation error on the test set
+        supports batches on training set, but not on test set
+        """
+        
+        y = T.ivector ('y' )
+
+        isbatches = len(train.shape) == 3
+
+        train_x = theano.shared(value = np.asarray(train,dtype=theano.config.floatX), name = 'train_x')
+        train_y = T.cast(theano.shared(value = np.asarray(label_train), name = 'train_y'),'int32')
+    
+        cost, updates = self.get_cost_and_updates(y,learning_rate)
+
+        test_x = theano.shared( value = np.asarray( test, theano.config.floatX), name = 'test_x' )
+        test_y = T.cast( theano.shared( value = np.asarray( label_test ), name = 'test_y'), 'int32' )
+    
+        if not isbatches:
+
+            train_lr = theano.function([], cost,
+                    updates = updates,
+                    givens = [(y,train_y),(self.data,train_x)],
+                    on_unused_input='ignore')
+            err_train = self.errors(self.data,y)
+            errors_train = theano.function([], err_train,
+                    givens = {y:train_y,self.data:train_x})
+            errors_test = theano.function([], err_train,
+                    givens = {y:test_y,self.data:test_x})
+
+            for epoch in xrange(training_epochs):
+                c = train_lr()
+                e = errors_train()
+                val_e = errors_test()
+ #               print "Training epoch %d gave cost %lf, training errors %lf, validation errors %lf"%(epoch,np.mean(c),np.mean(e), np.mean( val_e) )
+        else:
+            index = T.lscalar('index')
+            nbatches = train.shape[0]
+            train_lr = theano.function([index], cost,
+                    updates = updates,
+                    givens = [(y,train_y[index]),(self.data,train_x[index])])
+            err_train = self.errors(self.data,y)
+            errors_train = theano.function([index], err_train,
+                    givens= [(y,train_y[index]),(self.data,train_x[index])])
+            errors_test = theano.function([], err_train,
+                    givens = [(y,test_y),(self.data,test_x)])
+            for epoch in xrange(training_epochs):
+                c = []
+                e = []
+                val_e = []
+                for batch in range(nbatches):
+                    c.append( train_lr(batch))
+                    e.append(errors_train(batch))
+                val_e = errors_test()
+                
+#                print "Training epoch %d gave cost %lf, training errors %lf, validation errors %lf"%(epoch,np.mean(c),np.mean(e), np.mean( val_e) )
+
+    def fit(self, train, label, learning_rate=1e-4, training_epochs = 1000, tolerance=1e-4, nbatches = None):
+        y = T.ivector('y')
+        if isbatches is not None:
+            train = train.reshape( train.shape[0]/nbatches, nbatches, train.shape[1] )
+            labels = labels.reshape( labels.shape[0]/nbatches, nbatches )
+            isbatches = True
+        else:
+            isbatches = len(train.shape) == 3
+    
+        train_x = theano.shared(value = np.asarray(train,dtype=theano.config.floatX), name = 'train_x')
+        train_y = T.cast(theano.shared(value = np.asarray(label), name = 'train_y'),'int32')
+    
+        cost, updates = self.get_cost_and_updates(y,learning_rate)
+   
+    
+        if not isbatches:
+
+            train_lr = theano.function([], cost,
+                    updates = updates,
+                    givens = [(y,train_y),(self.data,train_x)],
+                    on_unused_input='ignore')
+            err_train = self.errors(self.data,y)
+            errors_train = theano.function([], err_train,
+                    givens = {y:train_y,self.data:train_x})
+            costs = []
+            for epoch in xrange(training_epochs):
+                c = train_lr()
+                costs = [c] + costs
+                costs = costs[:10]
+                e = errors_train()
+#                print "Training epoch %d gave cost %lf, errors %lf"%(epoch,np.mean(c),np.mean(e))
+
+                if epoch>50 and np.abs( np.mean( costs ) - c )/c < tolerance:
+                    break
+
+        else:
+            index = T.lscalar('index')
+            nbatches = train.shape[0]
+            train_lr = theano.function([index], cost,
+                    updates = updates,
+                    givens = [(y,train_y[index]),(self.data,train_x[index])])
+            err_train = self.errors(self.data,y)
+            errors_train = theano.function([index], err_train,
+                    givens= [(y,train_y[index]),(self.data,train_x[index])])
+            costs = []
+            for epoch in xrange(training_epochs):
+                c = []
+                e = []
+                for batch in range(nbatches):
+                    c.append( train_lr(batch))
+                    e.append(errors_train(batch))
+                costs = [np.mean( c )] + costs
+                costs = costs[:10]
+#                print "Training epoch %d gave cost %lf, errors %lf"%(epoch,np.mean(c),np.mean(e))
+                if epoch> 50 and np.abs( np.mean(costs) - c.mean() )/c.mean() < tolerance:
+                    break
+

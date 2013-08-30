@@ -2,3 +2,6 @@
 *.pkl
 *.png
 *.jpg
+*.pyc
+*.swp
+*.swo
