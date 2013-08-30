@@ -22,21 +22,20 @@ import numpy as np
 if __name__ == '__main__':
     print __doc__
 
+
     try:
         with open( sys.argv[1], 'r' ) as f:
-            W, bh = pic.load( f )
-        ae_pretrain = False
-        print 'loaded ae stuffz...'
+            W, _, bh = pic.load( f )
     except:
         W = None
         bh = None
         ae_pretrain = True
-    
+
     try:
         with open( sys.argv[2] ,'r') as f:
+
             W2, b2 = pic.load(f)
         pretrain = False
-        print 'loaded lr stuffz...'
     except:
         W2 = None
         b2 = None
@@ -45,12 +44,12 @@ if __name__ == '__main__':
 
     try:
         from IPython.parallel import Client
-        print 'we iz gotz parallelz!!'
     except:
         print "No parallel ipython, sorry!"
         exit()
 
     rc = Client()
+    print rc.ids
     dview = rc[:4]
 
     @dview.parallel
@@ -65,28 +64,17 @@ if __name__ == '__main__':
     labels = np.array(labels)
 
     if ae_pretrain:
-        print 'ae pretraining...'
         da = ae.dA(784,400)
-        da.fit(train.reshape((420,100,784)), training_epochs = 200)
+        da.fit(train.reshape((420,100,784)), labels.reshape((420,100)))
         W = da.W.get_value()
         bh = da.b_h.get_value()
         print 'pretrained ae'
-        with open(sys.argv[1],'wb') as f:
-            pic.dump([W,bh],f)
-            print 'dumped ae stuffz to %s'%sys.argv[1]
-
     if pretrain:
-        print 'lr pretraining...'
-        da = ae.dA(784,400,W1 = W, bh = bh)
         lr = ae.LogisticRegression( 400, 10 )
-        lr.fit( da.transform(train).reshape((420,100,400)), labels.reshape((420,100)), training_epochs = 200)
+        lr.fit( da.transform(train).reshape((420,100,400)), labels.reshape((420,100)))
         W2 = lr.W.get_value()
         b2 = lr.b.get_value()
         print 'pretrained logreg'
-        with open(sys.argv[2],'wb') as f:
-            pic.dump([W2,b2],f)
-            print 'dumped logreg stuffz to %s'%sys.argv[2]
-
 
     cross_val = cv.KFold( 42000, k=8) 
     
