@@ -258,7 +258,7 @@ class LogisticRegression(object):
         return -T.mean(T.log(self.p_y_given_x)[T.arange(y.shape[0]), y])
 
 
-    def fit(self, train, label, learning_rate=1, training_epochs = 10000):
+    def fit(self, train, label, learning_rate=1, training_epochs = 1000, verbose = False):
         y = T.ivector('y')
         isbatches = len(train.shape) == 3
         train_x = theano.shared(value = np.asarray(train,dtype=theano.config.floatX), name = 'train_x')
@@ -277,7 +277,7 @@ class LogisticRegression(object):
             for epoch in xrange(training_epochs):
                 c = train_lr()
                 e = errors_train()
-                print "Training epoch %d gave cost %lf, errors %lf"%(epoch,np.mean(c),np.mean(e))
+                if verbose: print "Training epoch %d gave cost %lf, errors %lf"%(epoch,np.mean(c),np.mean(e))
         else:
             nbatches = train.shape[0]
             index = T.lscalar('index')
@@ -294,7 +294,7 @@ class LogisticRegression(object):
                 for batch in range(nbatches):
                     c.append( train_lr(batch))
                     e.append(errors_train(batch))
-                print "Training epoch %d gave cost %lf, errors %lf"%(epoch,np.mean(c),np.mean(e))
+                if verbose: print "Training epoch %d gave cost %lf, errors %lf"%(epoch,np.mean(c),np.mean(e))
 
 
     def predict(self,x):
