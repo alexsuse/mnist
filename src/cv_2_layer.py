@@ -25,7 +25,7 @@ def train_mlp_and_score( args ):
     ae = imp.load_source('autoencoder','/Users/alex/mnist/src/autoencoder.py')
     train, tr_label, test, te_label, W, bh, W2, b2 = args
     mlp = ae.TwoLayerPerceptron( 784, W.shape[1], 10, W_1_init = W, b_1_init = bh, W_2_init = W2, b_2_init = b2 )
-    mlp.fit(train, tr_label, nbatches = 100, training_epochs = 10)
+    mlp.fit( train, tr_label, nbatches = 100, training_epochs = 300)
     return mlp.score( test, te_label )
 
 if __name__ == '__main__':
@@ -64,10 +64,8 @@ if __name__ == '__main__':
 
     labels, train, test = pp.load_from_csv( sys.argv[3], sys.argv[4] )
 
-    
-    train = train[:5000]
-
-    labels = np.array(labels)[:5000]
+    train = train[:15000]
+    labels = np.array(labels)[:15000]
 
     if ae_pretrain:
         print 'ae pretraining...'
@@ -93,7 +91,7 @@ if __name__ == '__main__':
             print 'dumped logreg stuffz to %s'%sys.argv[2]
 
 
-    cross_val = cv.KFold( 5000, n_folds=2) 
+    cross_val = cv.KFold( train.shape[0], n_folds=5) 
     
     sets = [(train[i],labels[i],train[j],labels[j], W, bh, W2, b2) for i,j in cross_val]
     

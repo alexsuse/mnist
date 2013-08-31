@@ -437,7 +437,7 @@ class TwoLayerPerceptron(object):
         y = T.ivector('y')
         if nbatches is not None:
             train = train.reshape( train.shape[0]/nbatches, nbatches, train.shape[1] )
-            labels = labels.reshape( labels.shape[0]/nbatches, nbatches )
+            label = label.reshape( label.shape[0]/nbatches, nbatches )
             isbatches = True
         else:
             isbatches = len(train.shape) == 3
@@ -487,6 +487,6 @@ class TwoLayerPerceptron(object):
                 costs = [np.mean( c )] + costs
                 costs = costs[:10]
 #                print "Training epoch %d gave cost %lf, errors %lf"%(epoch,np.mean(c),np.mean(e))
-                if epoch> 50 and np.abs( np.mean(costs) - c.mean() )/c.mean() < tolerance:
+                if epoch> 50 and np.abs( np.mean(costs) - np.mean(c) )/np.mean(c) < tolerance:
                     break
 
