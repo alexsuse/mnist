@@ -98,5 +98,8 @@ if __name__ == '__main__':
     print 'trying parallel evaluation...'
 
     scores = dview.map( train_mlp_and_score, sets )
-
-    print scores.get()
+    scores = scores.get()
+    with open('scores.out','wb') as f:
+        for s in scores:
+             f.write(str(s))
+    print scores
