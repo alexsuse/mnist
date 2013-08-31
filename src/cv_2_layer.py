@@ -51,7 +51,8 @@ if __name__ == '__main__':
         rc = Client()
         dview = rc[:4]
         with dview.sync_imports():
-            import autoencoder
+            import imp
+            autoencoder = imp.load_source( 'autoencoder', '/home/susemihl/mnist/src/autoencoder.py' )
         print 'we iz gotz parallelz!!'
     except:
         print "No parallel ipython, sorry!"
