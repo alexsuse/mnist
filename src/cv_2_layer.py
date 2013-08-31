@@ -3,9 +3,8 @@
 cross-validate my 2-layer MLP implementation with cross_val_score from sklearn
 
 arg1 :: first layer params pickle
-arg2 :: second layer params pickle
-arg3 :: train.csv
-arg4 :: test.csv
+arg2 :: train.csv
+arg3 :: test.csv
 
 @author = Alex Susemihl
 """
@@ -59,7 +58,7 @@ if __name__ == '__main__':
         exit()
 
 
-    labels, train, test = pp.load_from_csv( sys.argv[3], sys.argv[4] )
+    labels, train, test = pp.load_from_csv( sys.argv[2], sys.argv[3] )
 
     train = train
     labels = np.array(labels)
