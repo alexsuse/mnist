@@ -10,6 +10,7 @@ arg3 :: test.csv
 """
 
 import sys
+sys.path.append('/home/susemihl/mnist/src')
 import preprocess as pp
 import cPickle as pic
 import numpy
@@ -17,21 +18,33 @@ import autoencoder as ae
 from train_classifier import print_preds_to_csv
 import sklearn.cross_validation as cv
 import numpy as np
+from IPython.parallel import require
 
 #    @dview.parallel
+@require('autoencoder')
 def train_mlp_and_score( args ):
     train, tr_label, test, te_label, W, bh = args
-    W2, b2 = pre_train_log_reg( train, tr_label )
+    #autoencoder = imp.load_source( 'autoencoder', '/home/susemihl/mnist/src/autoencoder.py' )   
+    #pretrain logreg layer greedily
+    logreg = autoencoder.LogisticRegression(n_in = 400, n_out = 10)
+    #create da to transform data
+    da = autoencoder.dA( 784, 400, W1=W, bh=bh )
+    logreg.fit( da.transform( train ), tr_label )
+    #get params from logerd layer
+    W2, b2 = logreg.W.get_value(), logreg.b.get_value()
+    del da
+    del logreg
     mlp = autoencoder.TwoLayerPerceptron( 784, W.shape[1], 10,
                 W_1_init = W, b_1_init = bh, W_2_init = W2, b_2_init = b2 )
     mlp.fit( train, tr_label, nbatches = 100, training_epochs = 1000)
     return mlp.score( test, te_label )
 
-def pre_train_logreg( args ):
-    train, labels = args
-    logreg = autoencoder.LogisticRegression
-    logreg.fit( train, labels )
-    return logreg.W.get_value(), logreg.b.get_value()
+@require('autoencoder')
+def try_autoencoder(args):
+    #autoencoder = imp.load_source( 'autoencoder', '/home/susemihl/mnist/src/autoencoder.py' )   
+    ae = autoencoder.dA.__name__
+    return ae
+
 
 if __name__ == '__main__':
     print __doc__
@@ -49,7 +62,7 @@ if __name__ == '__main__':
     try:
         from IPython.parallel import Client
         rc = Client()
-        dview = rc[:4]
+        dview = rc[:]
         with dview.sync_imports():
             import imp
             autoencoder = imp.load_source( 'autoencoder', '/home/susemihl/mnist/src/autoencoder.py' )
@@ -58,6 +71,8 @@ if __name__ == '__main__':
         print "No parallel ipython, sorry!"
         exit()
 
+    trial = dview.map(try_autoencoder, range(8) )
+    print trial.get()
 
     labels, train, test = pp.load_from_csv( sys.argv[2], sys.argv[3] )
 
@@ -91,9 +106,9 @@ if __name__ == '__main__':
 #            print 'dumped logreg stuffz to %s'%sys.argv[2]
 
 
-    cross_val = cv.KFold( train.shape[0], n_folds=16) 
+    cross_val = cv.KFold( train.shape[0], k=8) 
     
-    sets = [(train[i],labels[i],train[j],labels[j], W, bh, W2, b2) for i,j in cross_val]
+    sets = [(train[i],labels[i],train[j],labels[j], W, bh) for i,j in cross_val]
     
     print 'trying parallel evaluation...'
 
