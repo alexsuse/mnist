@@ -9,6 +9,7 @@ arg3 :: test.csv
 @author = Alex Susemihl
 """
 
+import sys
 import preprocess as pp
 import cPickle as pic
 import numpy
@@ -35,7 +36,7 @@ def train_mlp_and_score( args ):
     
     mlp = autoencoder.TwoLayerPerceptron( 784, W.shape[1], 10,
                 W_1_init = W, b_1_init = bh, W_2_init = W2, b_2_init = b2 )
-    mlp.fit( train, tr_label, nbatches = 100, training_epochs = 1000)
+    mlp.fit( train, tr_label, nbatches = 150, training_epochs = 1000)
     
     return mlp.score( test, te_label )
 
@@ -82,7 +83,7 @@ if __name__ == '__main__':
             print 'dumped ae stuffz to %s'%sys.argv[1]
 
     cross_val = cv.KFold( train.shape[0], k=8) 
-    
+   
     sets = [(train[i],labels[i],train[j],labels[j], W, bh) for i,j in cross_val]
     
     print 'trying parallel evaluation...'
