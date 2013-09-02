@@ -9,8 +9,6 @@ arg3 :: test.csv
 @author = Alex Susemihl
 """
 
-import sys
-sys.path.append('/home/susemihl/mnist/src')
 import preprocess as pp
 import cPickle as pic
 import numpy
@@ -18,32 +16,28 @@ import autoencoder as ae
 from train_classifier import print_preds_to_csv
 import sklearn.cross_validation as cv
 import numpy as np
-from IPython.parallel import require
 
-#    @dview.parallel
-@require('autoencoder')
 def train_mlp_and_score( args ):
+    import sys
+    import theano.tensor as T
+    sys.path.append('/home/susemihl/mnist/src')
+    import autoencoder
+    
     train, tr_label, test, te_label, W, bh = args
-    #autoencoder = imp.load_source( 'autoencoder', '/home/susemihl/mnist/src/autoencoder.py' )   
-    #pretrain logreg layer greedily
+    
     logreg = autoencoder.LogisticRegression(n_in = 400, n_out = 10)
     #create da to transform data
-    da = autoencoder.dA( 784, 400, W1=W, bh=bh )
-    logreg.fit( da.transform( train ), tr_label )
-    #get params from logerd layer
+    transf_train = T.nnet.sigmoid( T.dot( train, W ) + bh ).eval()
+    logreg.fit( transf_train, tr_label )
+    #get params from logreg layer
     W2, b2 = logreg.W.get_value(), logreg.b.get_value()
-    del da
     del logreg
+    
     mlp = autoencoder.TwoLayerPerceptron( 784, W.shape[1], 10,
                 W_1_init = W, b_1_init = bh, W_2_init = W2, b_2_init = b2 )
     mlp.fit( train, tr_label, nbatches = 100, training_epochs = 1000)
+    
     return mlp.score( test, te_label )
-
-@require('autoencoder')
-def try_autoencoder(args):
-    #autoencoder = imp.load_source( 'autoencoder', '/home/susemihl/mnist/src/autoencoder.py' )   
-    ae = autoencoder.dA.__name__
-    return ae
 
 
 if __name__ == '__main__':
@@ -64,25 +58,19 @@ if __name__ == '__main__':
         rc = Client()
         dview = rc[:]
         with dview.sync_imports():
-            import imp
-            autoencoder = imp.load_source( 'autoencoder', '/home/susemihl/mnist/src/autoencoder.py' )
+            pass
         print 'we iz gotz parallelz!!'
     except:
         print "No parallel ipython, sorry!"
         exit()
 
-    trial = dview.map(try_autoencoder, range(8) )
-    print trial.get()
-
     labels, train, test = pp.load_from_csv( sys.argv[2], sys.argv[3] )
 
-    train = train
     labels = np.array(labels)
 
-    unsuper = np.append( train, test, axis = 0 )
-    print unsuper.shape
-
     if ae_pretrain:
+        unsuper = np.append( train, test, axis = 0 )
+        print unsuper.shape
         print 'ae pretraining...'
         da = ae.dA(784,400)
         da.fit(unsuper.reshape((unsuper.shape[0]/100,100,784)), training_epochs = 200)
@@ -92,19 +80,6 @@ if __name__ == '__main__':
         with open(sys.argv[1],'wb') as f:
             pic.dump([W,bh],f)
             print 'dumped ae stuffz to %s'%sys.argv[1]
-#
-#    if pretrain:
-#        print 'lr pretraining...'
-#        da = ae.dA(784,400,W1 = W, bh = bh)
-#        lr = ae.LogisticRegression( 400, 10 )
-#        lr.fit( da.transform(train).reshape((420,100,400)), labels.reshape((420,100)), training_epochs = 200)
-#        W2 = lr.W.get_value()
-#        b2 = lr.b.get_value()
-#        print 'pretrained logreg'
-#        with open(sys.argv[2],'wb') as f:
-#            pic.dump([W2,b2],f)
-#            print 'dumped logreg stuffz to %s'%sys.argv[2]
-
 
     cross_val = cv.KFold( train.shape[0], k=8) 
     
