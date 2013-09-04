@@ -5,6 +5,7 @@ cross-validate my 2-layer MLP implementation with cross_val_score from sklearn
 arg1 :: first layer params pickle
 arg2 :: train.csv
 arg3 :: test.csv
+arg4 :: ipcluster profile (optional)
 
 @author = Alex Susemihl
 """
@@ -19,11 +20,8 @@ import sklearn.cross_validation as cv
 import numpy as np
 
 def train_mlp_and_score( args ):
-    import sys
-    import theano.tensor as T
-    sys.path.append('/home/susemihl/mnist/src')
-    import autoencoder
-    
+    T = theano.tensor
+
     train, tr_label, test, te_label, W, bh = args
     
     logreg = autoencoder.LogisticRegression(n_in = 400, n_out = 10)
@@ -36,7 +34,7 @@ def train_mlp_and_score( args ):
     
     mlp = autoencoder.TwoLayerPerceptron( 784, W.shape[1], 10,
                 W_1_init = W, b_1_init = bh, W_2_init = W2, b_2_init = b2 )
-    mlp.fit( train, tr_label, nbatches = 150, training_epochs = 1000)
+    mlp.fit( train, tr_label, nbatches = 150, training_epochs = 10)
     
     return mlp.score( test, te_label )
 
@@ -56,14 +54,20 @@ if __name__ == '__main__':
 
     try:
         from IPython.parallel import Client
-        rc = Client()
+        try:
+            rc = Client(profile=sys.argv[4])
+        except:
+            rc = Client()
         dview = rc[:]
-        with dview.sync_imports():
-            pass
-        print 'we iz gotz parallelz!!'
     except:
         print "No parallel ipython, sorry!"
         exit()
+    with dview.sync_imports():
+        import sys
+        import autoencoder
+        import theano
+        import theano.tensor
+    print 'we iz gotz parallelz!!'
 
     labels, train, test = pp.load_from_csv( sys.argv[2], sys.argv[3] )
 
@@ -74,7 +78,7 @@ if __name__ == '__main__':
         print unsuper.shape
         print 'ae pretraining...'
         da = ae.dA(784,400)
-        da.fit(unsuper.reshape((unsuper.shape[0]/100,100,784)), training_epochs = 200)
+        da.fit(unsuper.reshape((unsuper.shape[0]/100,100,784)), training_epochs = 50)
         W = da.W.get_value()
         bh = da.b_h.get_value()
         print 'pretrained ae'
@@ -88,7 +92,7 @@ if __name__ == '__main__':
     
     print 'trying parallel evaluation...'
 
-    scores = dview.map( train_mlp_and_score, sets )
+    scores = dview.map( train_mlp_and_score, sets[0] )
     scores = scores.get()
     with open('scores.out','wb') as f:
         for s in scores:
