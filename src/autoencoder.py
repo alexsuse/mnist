@@ -1,4 +1,4 @@
-
+#!/usr/bin/env python
 """
 Implements a simple autoencoder class, with a simple training method.
 """
@@ -72,7 +72,7 @@ class dA:
 
         self.params = [self.W, self.b_h, self.b_v]
 
-    def fit(self,train_data,training_epochs=400,corruption = 0.4, l_rate = 5,tol = 1e-4):
+    def fit(self,train_data,training_epochs=400,corruption = 0.4, l_rate = 5,tol = 1e-4, verbose=False):
         isbatches = len(train_data.shape)==3
         change_tol_low = 1e-3
         change_tol_high = 3e-1
@@ -94,8 +94,8 @@ class dA:
                 c = train_da(learning_rate = l_rate)
                 costs = [c]+costs
                 
-#                print('Training epoch %d, cost %.5f,'
-#                        'time %dsecs')%(epoch,c,time.clock()-epoch_time)
+                if verbose: print('Training epoch %d, cost %.5f,'
+                        'time %dsecs')%(epoch,c,time.clock()-epoch_time)
                 costs = costs[:10]
 
                 rel_cost_change = (c-np.mean(costs))/np.abs(c)
@@ -127,7 +127,7 @@ class dA:
                 for batch in order:
                     c.append(train_da(index = batch, learning_rate = l_rate))
                 costs = [np.mean(c)]+costs 
-                print('Training epoch %d, cost %.5f,'
+                if verbose: print('Training epoch %d, cost %.5f,'
                         'time %dsecs')%(epoch,costs[0],time.clock()-epoch_time)
                 costs = costs[:10]
                 rel_cost_change = (costs[0]-np.mean(costs))/np.abs(costs[0])
@@ -259,42 +259,73 @@ class LogisticRegression(object):
 
 
     def fit(self, train, label, learning_rate=1, training_epochs = 1000, verbose = False):
+        tol_low = 1e-3
+        tol_high = 5e-1
+
         y = T.ivector('y')
+        l_rate = T.dscalar('l_rate')
         isbatches = len(train.shape) == 3
         train_x = theano.shared(value = np.asarray(train,dtype=theano.config.floatX), name = 'train_x')
         train_y = T.cast(theano.shared(value = np.asarray(label), name = 'train_y'),'int32')
-        cost, updates = self.get_cost_and_updates(y,learning_rate)
+        cost, updates = self.get_cost_and_updates(y,l_rate)
         
         if not isbatches:
-            train_lr = theano.function([], cost,
+            inputs = [theano.Param(l_rate, default=0.1)]
+            train_lr = theano.function(inputs = inputs, outputs = cost,
                     updates = updates,
                     givens = [(y,train_y),(self.data,train_x)],
                     on_unused_input='ignore')
             err_train = self.errors(self.data,y)
             errors_train = theano.function([], err_train,
                     givens = {y:train_y,self.data:train_x})
-
+            
+            costs = []
             for epoch in xrange(training_epochs):
-                c = train_lr()
+                c = train_lr(l_rate=learning_rate)
                 e = errors_train()
+                
                 if verbose: print "Training epoch %d gave cost %lf, errors %lf"%(epoch,np.mean(c),np.mean(e))
+                
+                costs = [np.mean(c)] + costs
+                costs = costs[:10]
+                rel_cost_change = (costs[0]-np.mean(costs))/np.abs(costs[0])
+
+                if epoch>20:
+                    if np.abs( rel_cost_change ) < tol_low and rel_cost_change < 0.0:
+                        learning_rate = 1.1*learning_rate
+                        if verbose: print 'increasing learning rate to %lf'%learning_rate
+                    if np.abs( rel_cost_change ) > tol_high or rel_cost_change > 0.0:
+                        learning_rate = 0.85*learning_rate
+                        if verbose: print 'lowering learning rate to %lf'%learning_rate
         else:
             nbatches = train.shape[0]
             index = T.lscalar('index')
-            train_lr = theano.function([index], cost,
+            inputs = [index,theano.Param(l_rate,default=0.1)]
+            train_lr = theano.function(inputs = inputs, outputs = cost,
                     updates = updates,
                     givens = [(y,train_y[index]),(self.data,train_x[index])])
             err_train = self.errors(self.data,y)
             errors_train = theano.function([index], err_train,
                     givens= [(y,train_y[index]),(self.data,train_x[index])])
-
+            costs = []
             for epoch in xrange(training_epochs):
                 c = []
                 e = []
                 for batch in range(nbatches):
-                    c.append( train_lr(batch))
+                    c.append( train_lr(batch, l_rate=learning_rate))
                     e.append(errors_train(batch))
                 if verbose: print "Training epoch %d gave cost %lf, errors %lf"%(epoch,np.mean(c),np.mean(e))
+                costs = [np.mean(c)] + costs
+                costs = costs[:10]
+                rel_cost_change = (costs[0]-np.mean(costs))/np.abs(costs[0])
+                
+                if epoch>20:
+                    if np.abs( rel_cost_change ) < tol_low and rel_cost_change < 0.0:
+                        learning_rate = 1.1*learning_rate
+                        if verbose: print 'increasing learning rate to %lf'%learning_rate
+                    if np.abs( rel_cost_change ) > tol_high or rel_cost_change > 0.0:
+                        learning_rate = 0.85*learning_rate
+                        if verbose: print 'lowering learning rate to %lf'%learning_rate
 
 
     def predict(self,x):

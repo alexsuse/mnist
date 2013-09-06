@@ -32,11 +32,6 @@ def train_and_score( classifier, class_args, train, train_l, test, test_l ):
 
     print 'validation score %lf'%cl.score( test, test_l )
 
-def print_preds_to_csv( preds, filename ):
-    with csv.writer( open( filename, 'wb' ) ) as writer:
-        for i in xrange(preds.shape[0]):
-            writer.writerow([i,preds[i]])
-
 if __name__=='__main__':
     print __doc__
 

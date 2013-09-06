@@ -16,6 +16,12 @@ import csv
 import sklearn.decomposition as dec
 import numpy as np
 
+
+def print_preds_to_csv( preds, filename ):
+    with csv.writer( open( filename, 'wb' ) ) as writer:
+        for i in xrange(preds.shape[0]):
+            writer.writerow([i,preds[i]])
+
 def load_from_csv( train_file , test_file ):
 
 
@@ -63,6 +69,23 @@ def perform_sk_preprocessing( preprocessor, ppargs , train_features, test_featur
     test_features = pca.transform( test_features )
 
     return pca,train_features,test_features
+
+def make_patches( train, patch_size = 10, n = 50000 ):
+    """
+    make patches from training array with (n,784) dimension.
+    returns flattened patches for ae training.
+    """
+    N = train.shape[0]
+    x_size = 28
+    y_size = 28
+    patches = []
+    train = train.reshape( (train.shape[0], 28, 28) )
+    for i in xrange(n):
+        ind = np.random.randint( N )
+        x = np.random.randint( x_size - patch_size )
+        y = np.random.randint( y_size - patch_size )
+        patches.append( train[ ind, x:x+patch_size, y:y+patch_size ].reshape( (patch_size**2,) ) )
+    return np.array( patches )
 
 if __name__=='__main__':
 

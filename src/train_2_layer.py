@@ -14,7 +14,6 @@ import preprocess as pp
 import cPickle as pic
 import numpy
 import autoencoder as ae
-from train_classifier import print_preds_to_csv
 import sklearn.cross_validation as cv
 
 if __name__ == '__main__':
@@ -61,4 +60,4 @@ if __name__ == '__main__':
 
     preds = mlp.predict( test )
 
-    print_preds_to_csv( preds, sys.argv[4] ) 
+    pp.print_preds_to_csv( preds, sys.argv[4] ) 
