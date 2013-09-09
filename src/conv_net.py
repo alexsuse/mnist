@@ -19,6 +19,8 @@ import preprocess as pp
 import cPickle as pic
 import os
 
+from IPython.parallel import Client
+
 class OneLayerConvNet(object):
     def __init__(self, filter_shape, image_shape, filters_init=None,
                 bias_init=None, fix_filters=True, rng=None):
@@ -58,8 +60,10 @@ class OneLayerConvNet(object):
 
         self.params = [self.W, self.b, self.logreg.W, self.logreg.b]
 
-    def negativeLL( self, y ):
-        p_y_given_x = self.logreg.get_predictions( self.get_conv( self.data ).flatten(2) )
+    def negativeLL( self, y, x=None ):
+        if x is None:
+            x = self.data
+        p_y_given_x = self.logreg.get_predictions( self.get_conv( x ).flatten(2) )
         return  -T.mean( T.log(p_y_given_x[ T.arange(y.shape[0]), y ]) )
 
     def get_errors( self, x, y ):
@@ -80,9 +84,24 @@ class OneLayerConvNet(object):
                 image_shape=data.shape.eval() ) + self.b.dimshuffle('x', 0, 'x', 'x'))
         
 
-    def get_cost_and_updates( self, y, learning_rate=1e-1 ):
+    def get_grads( self, x, y ):
+
+        cost = self.negativeLL( y, x )
+
+        grad = T.grad( cost, self.params )
+
+        grads = []
+
+        for p,g in zip(self.params,grad):
+            grads.append((p,g))
+
+        return grads
+
+    def get_cost_and_updates( self, y, x= None, learning_rate=1e-1 ):
         
-        cost = self.negativeLL( y ) 
+        if x is None:
+            x = self.data
+        cost = self.negativeLL( y, x ) 
 
         grad = T.grad( cost, self.params )
         
@@ -95,9 +114,9 @@ class OneLayerConvNet(object):
 
     def pretrain_logreg( self, train, labels, image_shape ):
 
-        data = self.get_data_conv( train, image_shape ).flatten(2).eval()
+        data = np.array([self.get_conv( t ).flatten(2).eval() for t in train])
         
-        self.logreg.fit( data, labels, learning_rate=3e-3, verbose=True, training_epochs=20 )
+        self.logreg.fit_parallel( data, labels, learning_rate=3e-3, training_epochs=100 )
 
     def fit( self, train, labels, learning_rate=1e-1, training_epochs=1000 ):
         
@@ -176,7 +195,7 @@ class OneLayerConvNet(object):
             train_conv_net = theano.function(inputs = inputs, outputs = cost, updates=updates,
                                 givens = [(y,train_y),(self.data,train_x)])
             errors = theano.function([], err,
-                                givens = [(y,trair_y),(self.data,train_x)])
+                                givens = [(y,train_y),(self.data,train_x)])
             
             costs = []
             for i in xrange(training_epochs):
@@ -207,6 +226,59 @@ class OneLayerConvNet(object):
                         break
 
 
+    def fit_parallel( self, train, labels, learning_rate=1e-3 ):
+        y = T.ivector('y')
+        x = T.tensor4('x')            
+
+        nbatches = train.shape[0]
+      
+        train_x = theano.shared( value = np.array( train, dtype=theano.config.floatX ),
+                                name = 'train_y')
+        train_y = theano.shared( value = np.array( labels, dtype='int32' ),
+                                name = 'train_y')
+        index = T.iscalar('index')
+
+        err = self.get_errors(x,y)
+ 
+        errors = theano.function([index],err,givens=[(x,train_x[index]),(y,train_y[index])])
+       
+        grads= self.get_grads(x,y)
+
+
+        up_functions = []
+        outputs = []
+        for p,g in grads:
+            outputs.append(g)
+        grad = theano.function([index],outputs = outputs,
+                                givens=[(x,train_x[index]),(y,train_y[index])])
+
+        try:
+            c = Client()
+            dview = c[:]
+        except:
+            print 'could not load direct view from ipcluster...'
+            print 'falling back on serial training.'
+            self.fit(train,labels)
+            return
+        
+        dview.push({'grad':grad,'errors':errors})
+
+        for epoch in xrange(training_epochs):
+           
+            epoch_time = time.time()
+            
+                
+            calls = dview.map_async( grad, range(nbatches) )
+
+            err_call = dview.map_async( errors, range(nbatches) )
+
+            for gr in calls:
+                for i,p in enumerate(self.params):
+                    p.set_value( p.get_value() - learning_rate* gr[i] )
+            
+            print 'Epoch %d, errors %lf, time %lf'%(epoch,
+                                                    np.mean(err_call.get(),axis=0),
+                                                    time.time()-epoch_time)
 
 if __name__ == '__main__':
 
@@ -277,9 +349,9 @@ if __name__ == '__main__':
     #cbuild conv_net
     conv_net = OneLayerConvNet(filter_shape, image_shape,
                                filters_init=W_ae, bias_init=b_ae)
-    #conv_net.pretrain_logreg( train[:4000].reshape((4000,1,28,28)), labels[:4000], (4000,1,28,28) )
+    conv_net.pretrain_logreg( train[:8000].reshape((8,1000,1,28,28)), np.array(labels[:8000]).reshape((8,1000)), (8,1000,1,28,28) )
     #conv_net.image_shape = (1000,1,28,28)
-    conv_net.fit( train.reshape((42,1000,1,28,28)), labels.reshape((42,1000)), learning_rate=1e-4, training_epochs=50 )
+    #conv_net.fit( train.reshape((42,1000,1,28,28)), labels.reshape((42,1000)), learning_rate=1e-4, training_epochs=50 )
+    conv_net.fit_parallel(train.reshape((42,1000,1,28,28)), labels.reshape((42,1000)))
 
-    preds = conv_net.predict(test.reshape((test.shape[0],1,28,28)) )
-    pp.print_pred_to_csv( preds, sys.argv[3] )
+    pp.print_preds_to_csv( preds, sys.argv[3] )

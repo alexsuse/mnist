@@ -332,6 +332,57 @@ class LogisticRegression(object):
         p_y_given_x = self.get_predictions(x)
         return T.argmax( p_y_given_x, axis = 1)
 
+    def get_grads( self, y ):
+        cost = self.negativeLL( y ) + self.lam*T.mean( T.sqr( self.W ) )
+
+        grads = T.grad( cost, self.params )
+
+        return zip(self.params,grads)
+
+    def fit_parallel( self, train, labels, learning_rate=1e-3, training_epochs = 1000 ):
+        y = T.ivector('y')
+        index = T.iscalar('index')
+
+        nbatches = train.shape[0]
+
+        train_x = theano.shared( value = np.array( train, dtype=theano.config.floatX ) )
+        train_y = theano.shared( value=np.array( labels, dtype='int32' ) )
+
+        grads = self.get_grads( y )
+
+        outputs = []
+        for p,g in grads:
+            outputs.append( g )
+
+        grad = theano.function( [index], outputs=outputs,
+                                givens = [(self.data,train_x[index]),(y,train_y[index])] )
+        
+        err = self.get_errors( self.data, y )
+        errors = theano.function( [index], err,
+                                givens = [(self.data,train_x[index]),(y,train_y[index])] )
+          
+        try:
+            c = Client()
+            dview = c[:]
+        except:
+            self.fit(train,labels)
+            return
+
+        print 'Parallel evaluation initialized properly.'
+
+        for epoch in xrange( training_epochs ):
+            epoch_time = time.time()
+
+            calls = dview.map_async( grad, range(nbatches) )
+
+            for gr in calls:
+                for i,p in enumerate( self.params ):
+                    p.set_value( p.get_value() - learning_rate*gr[i])
+
+            err_call = dview.map( errors, range(nbatches) ).get()
+            print "Training epcoh %d, errors %lf, time %lf"%\
+                    (epoch, np.mean(err_call ), time.time()-epoch_time )
+
     def get_cost_and_updates(self, y, learning_rate):                                                                                                                             
         cost = self.negativeLL(y)+self.lam*T.mean(self.W*self.W)
         grads = T.grad(cost, self.params)
