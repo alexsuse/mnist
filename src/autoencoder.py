@@ -11,6 +11,8 @@ from theano.printing import Print
 import time
 import random
 
+from IPython.parallel import Client
+
 class dA:
     """
     The classic autoencoder of yore.
@@ -357,7 +359,7 @@ class LogisticRegression(object):
         grad = theano.function( [index], outputs=outputs,
                                 givens = [(self.data,train_x[index]),(y,train_y[index])] )
         
-        err = self.get_errors( self.data, y )
+        err = self.errors( self.data, y )
         errors = theano.function( [index], err,
                                 givens = [(self.data,train_x[index]),(y,train_y[index])] )
           
@@ -365,7 +367,8 @@ class LogisticRegression(object):
             c = Client()
             dview = c[:]
         except:
-            self.fit(train,labels)
+            print 'falling back to regular training'
+            self.fit(train,labels,verbose=True)
             return
 
         print 'Parallel evaluation initialized properly.'

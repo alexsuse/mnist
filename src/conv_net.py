@@ -245,8 +245,8 @@ class OneLayerConvNet(object):
         grads= self.get_grads(x,y)
 
 
-        up_functions = []
         outputs = []
+        
         for p,g in grads:
             outputs.append(g)
         grad = theano.function([index],outputs = outputs,
@@ -255,6 +255,7 @@ class OneLayerConvNet(object):
         try:
             c = Client()
             dview = c[:]
+            print 'loaded direct view, all is good.\n Continuing with parallel training'
         except:
             print 'could not load direct view from ipcluster...'
             print 'falling back on serial training.'
@@ -349,9 +350,10 @@ if __name__ == '__main__':
     #cbuild conv_net
     conv_net = OneLayerConvNet(filter_shape, image_shape,
                                filters_init=W_ae, bias_init=b_ae)
-    conv_net.pretrain_logreg( train[:8000].reshape((8,1000,1,28,28)), np.array(labels[:8000]).reshape((8,1000)), (8,1000,1,28,28) )
-    #conv_net.image_shape = (1000,1,28,28)
+    #conv_net.image_shape = (500,1,28,28)
+    #conv_net.pretrain_logreg( train[:4000].reshape((8,500,1,28,28)), np.array(labels[:4000]).reshape((8,500)), (4,500,1,28,28) )
     #conv_net.fit( train.reshape((42,1000,1,28,28)), labels.reshape((42,1000)), learning_rate=1e-4, training_epochs=50 )
+    conv_net.image_shape = (1000,1,28,28)
     conv_net.fit_parallel(train.reshape((42,1000,1,28,28)), labels.reshape((42,1000)))
 
     pp.print_preds_to_csv( preds, sys.argv[3] )
