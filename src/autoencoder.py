@@ -231,17 +231,17 @@ class LogisticRegression(object):
 
     self.W
     '''
-    def __init__(self, n_in, n_out,lam=0.01, input=None, W2 = None, b = None):
+    def __init__(self, n_in, n_out,lam=0.01, input=None, W = None, b = None):
         if input is None:
             self.data = T.dmatrix('data')
         else:
             self.data = input
-        if W2 is None:
+        if W is None:
             Wi = np.random.uniform( low=-3./n_in, high=3./n_in, size=(n_in, n_out) )
             self.W = theano.shared(value=np.asarray( Wi,
                                     dtype=theano.config.floatX), name='W')
         else:
-            self.W = theano.shared(value = np.array(W2, dtype = theano.config.floatX), name = 'W')
+            self.W = theano.shared(value = np.array(W, dtype = theano.config.floatX), name = 'W')
         if b is None:
             bi = np.random.uniform( low=-1./n_out, high=1./n_out, size=(n_out,))
             self.b = theano.shared(value=np.asarray( bi,

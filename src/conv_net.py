@@ -9,21 +9,24 @@ arg3 :: path to output file (%s)
 
 """
 import sys
+import time
+import cPickle as pic
+import os
+
 import numpy as np
 import theano
 import theano.tensor as T
 from theano.tensor.nnet import conv
-import time
+from IPython.parallel import Client
+import IPython.parallel
+
 import autoencoder
 import preprocess as pp
-import cPickle as pic
-import os
-
-from IPython.parallel import Client
 
 class OneLayerConvNet(object):
     def __init__(self, filter_shape, image_shape, filters_init=None,
-                bias_init=None, fix_filters=True, rng=None):
+                bias_init=None, W2_init=None, b2_init=None,
+                fix_filters=True, rng=None):
         self.fix_filters = fix_filters
         self.data = T.dtensor4('data')
         
@@ -56,9 +59,20 @@ class OneLayerConvNet(object):
 
         output_dims = filter_shape[0]*(image_shape[3]-filter_shape[3]+1)*(image_shape[2]-filter_shape[2]+1)
 
-        self.logreg = autoencoder.LogisticRegression( output_dims, 10, input=self.output.flatten(2) )
+        self.logreg = autoencoder.LogisticRegression( 
+                            output_dims, 10, input=self.output.flatten(2),
+                            W=W2_init, b=b2_init
+                            )
 
         self.params = [self.W, self.b, self.logreg.W, self.logreg.b]
+
+    def get_params( self ):
+        params = {}
+        params['W1'] = self.W.get_value()
+        params['b1'] = self.b.get_value()
+        params['W2'] = self.logreg.W.get_value()
+        params['b2'] = self.logreg.b.get_value()
+        return params
 
     def negativeLL( self, y, x=None ):
         if x is None:
@@ -226,60 +240,118 @@ class OneLayerConvNet(object):
                         break
 
 
-    def fit_parallel( self, train, labels, learning_rate=1e-3 ):
+    def fit_parallel( self, train, labels, learning_rate=1e-3, training_epochs=100 ):
         y = T.ivector('y')
         x = T.tensor4('x')            
+    
+        #non-shared variables for distributed stuffs
+        W1 = T.tensor4('W1')
+        b1 = T.dvector('b1')
+        W2 = T.dmatrix('W2')
+        b2 = T.dvector('b2')
+
+        #numpy holders for the values of the parameters
+        np_W1 = self.W.get_value()
+        np_b1 = self.b.get_value()
+        np_W2 = self.logreg.W.get_value()
+        np_b2 = self.logreg.b.get_value()
+
+        hidden = T.nnet.sigmoid( conv.conv2d( x, W1, image_shape=self.image_shape,
+                                     filter_shape=self.filter_shape ) + \
+                                     b1.dimshuffle('x',0,'x','x') ).flatten(2)
+
+        probs = T.nnet.softmax( T.dot( hidden, W2 ) + b2 )
+
+        negLL = -T.mean( T.log( probs[ T.arange( y.shape[0] ), y] ) )
+
+        grs = T.grad( negLL, [W1,b1,W2,b2] )
+
+        outputs = [negLL] + grs
+
+        grads = theano.function( [ x, y, W1, b1, W2, b2 ], outputs )
+
 
         nbatches = train.shape[0]
       
-        train_x = theano.shared( value = np.array( train, dtype=theano.config.floatX ),
-                                name = 'train_y')
-        train_y = theano.shared( value = np.array( labels, dtype='int32' ),
-                                name = 'train_y')
-        index = T.iscalar('index')
-
-        err = self.get_errors(x,y)
+        predict = T.argmax( probs, axis=1 )
+     
+        err = T.mean( T.neq( predict, y ) )
  
-        errors = theano.function([index],err,givens=[(x,train_x[index]),(y,train_y[index])])
+        errors = theano.function([x,y,W1,b1,W2,b2],err)
        
-        grads= self.get_grads(x,y)
-
-
-        outputs = []
-        
-        for p,g in grads:
-            outputs.append(g)
-        grad = theano.function([index],outputs = outputs,
-                                givens=[(x,train_x[index]),(y,train_y[index])])
 
         try:
             c = Client()
             dview = c[:]
-            print 'loaded direct view, all is good.\n Continuing with parallel training'
+            with dview.sync_imports():
+                import os
+            dview.execute("os.environ['MLK_NUM_THREADS']='1'").get()
+            dview = c.load_balanced_view()
+            print 'loaded load_balanced_view with %d nodes, life is good.\nContinuing with parallel training\n'%len(c.ids)
         except:
             print 'could not load direct view from ipcluster...'
             print 'falling back on serial training.'
             self.fit(train,labels)
             return
         
-        dview.push({'grad':grad,'errors':errors})
+        xbatches = [ np.array( train[i], dtype=theano.config.floatX ) for i in range(train.shape[0])]
+        ybatches = [ np.array( labels[i], dtype='int32')  for i in range(train.shape[0])]
 
-        for epoch in xrange(training_epochs):
-           
-            epoch_time = time.time()
-            
+        try:
+
+            for epoch in xrange(training_epochs):
+               
+                epoch_time = time.time()
                 
-            calls = dview.map_async( grad, range(nbatches) )
+                args = xbatches, ybatches, [np_W1]*nbatches, [np_b1]*nbatches, [np_W2]*nbatches, [np_b2]*nbatches
+                 
+                calls = dview.map_async( grads, *args, ordered=False )
 
-            err_call = dview.map_async( errors, range(nbatches) )
+                err_call = dview.map_async( errors, *args, ordered=False )
+                
+                costs = []
 
-            for gr in calls:
-                for i,p in enumerate(self.params):
-                    p.set_value( p.get_value() - learning_rate* gr[i] )
+                for i,gr in enumerate(calls):
+                    costs.append(gr[0])
+                    np_W1 = np_W1 - learning_rate*gr[1]/nbatches 
+                    np_b1 = np_b1 - learning_rate*gr[2]/nbatches
+                    np_W2 = np_W2 - learning_rate*gr[3]/nbatches
+                    np_b2 = np_b2 - learning_rate*gr[4]/nbatches
+                
+                
+                print 'Epoch %d, cost %lf, errors %lf, time %lf'%(epoch,
+                                                        np.mean(costs),
+                                                        np.mean(err_call.get(),axis=0),
+                                                        time.time()-epoch_time)
+
+        except Exception as inst:
+            print 'Apparently some Engines died, retrying training for remaining %d epochs!'%training_epochs-epoch  
+            print 'Error type was %s'%type(inst)
             
-            print 'Epoch %d, errors %lf, time %lf'%(epoch,
-                                                    np.mean(err_call.get(),axis=0),
-                                                    time.time()-epoch_time)
+            dview.abort()
+            #saving intermediate results
+            self.W.set_value( np_W1 )
+            self.b.set_value( np_b1 )
+            self.logreg.W.set_value( np_W2 )
+            self.logreg.b.set_value( np_b2 )
+            
+            self.fit_parallel( train, labels, learning_rate=learning_rate, training_epochs=training_epochs-epoch )
+        except KeyboardInterrupt:
+            print 'You interrupted training! No probs...'
+            print 'Setting values of shared variables'
+            dview.abort()
+            #set self.parameters to learned values
+            self.W.set_value( np_W1 )
+            self.b.set_value( np_b1 )
+            self.logreg.W.set_value( np_W2 )
+            self.logreg.b.set_value( np_b2 )
+        
+        #set self.parameters to learned values
+        self.W.set_value( np_W1 )
+        self.b.set_value( np_b1 )
+        self.logreg.W.set_value( np_W2 )
+        self.logreg.b.set_value( np_b2 )
+
 
 if __name__ == '__main__':
 
@@ -347,13 +419,34 @@ if __name__ == '__main__':
     #data_conv = inp.reshape((batch_size, 1, 28, 28))
     #data_val_conv = val_inp.reshape(validation_shape)
 
+    try:
+        f = open('temp_pickle_conv_net_params.pkl','rb')
+        my_params = pic.load(f)
+        conv_net = OneLayerConvNet( filter_shape, image_shape,
+                                    filters_init=my_params['W1'],
+                                    bias_init=my_params['b1'],
+                                    W2_init=my_params['W2'],
+                                    b2_init=my_params['b2'])
+        print 'Loaded params %s from file %s'%(str(my_params.keys()),f.name)
+
+    except Exception as inst:
+        print type(inst)
+        print 'no params backup found'
+        conv_net = OneLayerConvNet(filter_shape, image_shape,
+                                   filters_init=W_ae, bias_init=b_ae)
     #cbuild conv_net
-    conv_net = OneLayerConvNet(filter_shape, image_shape,
-                               filters_init=W_ae, bias_init=b_ae)
     #conv_net.image_shape = (500,1,28,28)
     #conv_net.pretrain_logreg( train[:4000].reshape((8,500,1,28,28)), np.array(labels[:4000]).reshape((8,500)), (4,500,1,28,28) )
     #conv_net.fit( train.reshape((42,1000,1,28,28)), labels.reshape((42,1000)), learning_rate=1e-4, training_epochs=50 )
     conv_net.image_shape = (1000,1,28,28)
-    conv_net.fit_parallel(train.reshape((42,1000,1,28,28)), labels.reshape((42,1000)))
+    try:
+        conv_net.fit_parallel(train.reshape((42,1000,1,28,28)), labels.reshape((42,1000)), learning_rate=1e-3, training_epochs=400)
+        preds = conv_net.predict( test )
+        pp.print_preds_to_csv( preds, sys.argv[3] )
 
-    pp.print_preds_to_csv( preds, sys.argv[3] )
+    except:
+        print 'OK dumping last params to pickle'
+        params = conv_net.get_params()
+        with open('temp_pickle_conv_net_params.pkl','wb') as f:
+            pic.dump(params,f)
+
