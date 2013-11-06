@@ -19,6 +19,8 @@ import preprocess as pp
 import cPickle as pic
 import os
 
+rect = lambda x : T.maximum(0.0,x)
+
 class OneLayerConvNet(object):
     def __init__(self, filter_shape, image_shape, filters_init=None,
                 bias_init=None, fix_filters=True, rng=None):
