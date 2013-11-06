@@ -18,6 +18,7 @@ import theano
 import theano.tensor as T
 from theano.tensor.nnet import conv
 from IPython.parallel import Client
+from IPython.parallel import RemoteError, EngineError, CompositeError
 import IPython.parallel
 
 import autoencoder
@@ -289,6 +290,7 @@ class OneLayerConvNet(object):
             dview = c.load_balanced_view()
             print 'loaded load_balanced_view with %d nodes, life is good.\nContinuing with parallel training\n'%len(c.ids)
         except:
+            print 'Exception: %s'%sys.exc_info()[0]
             print 'could not load direct view from ipcluster...'
             print 'falling back on serial training.'
             self.fit(train,labels)
@@ -296,6 +298,8 @@ class OneLayerConvNet(object):
         
         xbatches = [ np.array( train[i], dtype=theano.config.floatX ) for i in range(train.shape[0])]
         ybatches = [ np.array( labels[i], dtype='int32')  for i in range(train.shape[0])]
+
+        print 'Going for %d epochs'%training_epochs
 
         try:
 
@@ -324,18 +328,6 @@ class OneLayerConvNet(object):
                                                         np.mean(err_call.get(),axis=0),
                                                         time.time()-epoch_time)
 
-        except Exception as inst:
-            print 'Apparently some Engines died, retrying training for remaining %d epochs!'%training_epochs-epoch  
-            print 'Error type was %s'%type(inst)
-            
-            dview.abort()
-            #saving intermediate results
-            self.W.set_value( np_W1 )
-            self.b.set_value( np_b1 )
-            self.logreg.W.set_value( np_W2 )
-            self.logreg.b.set_value( np_b2 )
-            
-            self.fit_parallel( train, labels, learning_rate=learning_rate, training_epochs=training_epochs-epoch )
         except KeyboardInterrupt:
             print 'You interrupted training! No probs...'
             print 'Setting values of shared variables'
@@ -345,6 +337,19 @@ class OneLayerConvNet(object):
             self.b.set_value( np_b1 )
             self.logreg.W.set_value( np_W2 )
             self.logreg.b.set_value( np_b2 )
+
+        except RemoteError, EngineError, CompositeError:
+            print 'Apparently some Engines died, retrying training for remaining %d epochs!'%training_epochs-epoch  
+            print 'Error type was %s'%sys.exc_info()[0]
+            
+            dview.abort()
+            #saving intermediate results
+            self.W.set_value( np_W1 )
+            self.b.set_value( np_b1 )
+            self.logreg.W.set_value( np_W2 )
+            self.logreg.b.set_value( np_b2 )
+            
+            self.fit_parallel( train, labels, learning_rate=learning_rate, training_epochs=training_epochs-epoch )
         
         #set self.parameters to learned values
         self.W.set_value( np_W1 )
@@ -445,6 +450,7 @@ if __name__ == '__main__':
         pp.print_preds_to_csv( preds, sys.argv[3] )
 
     except:
+        print 'Exception %s'%sys.exc_info()[0]
         print 'OK dumping last params to pickle'
         params = conv_net.get_params()
         with open('temp_pickle_conv_net_params.pkl','wb') as f:
