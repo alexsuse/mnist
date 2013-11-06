@@ -24,6 +24,8 @@ import IPython.parallel
 import autoencoder
 import preprocess as pp
 
+rect = lambda x : T.maximum(0.0,x)
+
 class OneLayerConvNet(object):
     def __init__(self, filter_shape, image_shape, filters_init=None,
                 bias_init=None, W2_init=None, b2_init=None,
@@ -56,7 +58,7 @@ class OneLayerConvNet(object):
         conv_out = conv.conv2d( self.data, self.W, filter_shape=filter_shape,
                                image_shape=image_shape)
 
-        self.output = T.tanh(conv_out + self.b.dimshuffle('x', 0, 'x', 'x'))
+        self.output = rect(conv_out + self.b.dimshuffle('x', 0, 'x', 'x'))
 
         output_dims = filter_shape[0]*(image_shape[3]-filter_shape[3]+1)*(image_shape[2]-filter_shape[2]+1)
 
@@ -91,11 +93,11 @@ class OneLayerConvNet(object):
         return self.get_predictions( x ).eval()
 
     def get_conv(self, input_val ):
-        return T.tanh(conv.conv2d(input_val, self.W, filter_shape=self.filter_shape,
+        return rect(conv.conv2d(input_val, self.W, filter_shape=self.filter_shape,
                 image_shape=self.image_shape) + self.b.dimshuffle('x', 0, 'x', 'x'))
 
     def get_data_conv( self, data ):
-        return T.tanh(conv.conv2d( data, self.W, filter_shape=self.filter_shape,
+        return rect(conv.conv2d( data, self.W, filter_shape=self.filter_shape,
                 image_shape=data.shape.eval() ) + self.b.dimshuffle('x', 0, 'x', 'x'))
         
 
