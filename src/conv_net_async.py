@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+# !/usr/bin/env python
 
 """
 Trains a convnet two-layer on MNIST (Eventually)
@@ -13,15 +13,20 @@ import time
 import cPickle as pic
 import os
 
+from guppy import hpy
+
 import numpy as np
 import theano
 import theano.tensor as T
 from theano.tensor.nnet import conv
-from IPython.parallel import Client, TimeoutError
+from IPython.parallel import Client
+from IPython.parallel import TimeoutError, RemoteError, EngineError, CompositeError
 import IPython.parallel
 
 import autoencoder
 import preprocess as pp
+
+rect = lambda x : T.maximum( 0.0, x )
 
 class OneLayerConvNet(object):
     def __init__(self, filter_shape, image_shape, filters_init=None,
@@ -55,7 +60,7 @@ class OneLayerConvNet(object):
         conv_out = conv.conv2d( self.data, self.W, filter_shape=filter_shape,
                                image_shape=image_shape)
 
-        self.output = T.tanh(conv_out + self.b.dimshuffle('x', 0, 'x', 'x'))
+        self.output = rect(conv_out + self.b.dimshuffle('x', 0, 'x', 'x'))
 
         output_dims = filter_shape[0]*(image_shape[3]-filter_shape[3]+1)*(image_shape[2]-filter_shape[2]+1)
 
@@ -90,11 +95,11 @@ class OneLayerConvNet(object):
         return self.get_predictions( x ).eval()
 
     def get_conv(self, input_val ):
-        return T.tanh(conv.conv2d(input_val, self.W, filter_shape=self.filter_shape,
+        return rect(conv.conv2d(input_val, self.W, filter_shape=self.filter_shape,
                 image_shape=self.image_shape) + self.b.dimshuffle('x', 0, 'x', 'x'))
 
     def get_data_conv( self, data ):
-        return T.tanh(conv.conv2d( data, self.W, filter_shape=self.filter_shape,
+        return rect(conv.conv2d( data, self.W, filter_shape=self.filter_shape,
                 image_shape=data.shape.eval() ) + self.b.dimshuffle('x', 0, 'x', 'x'))
         
 
@@ -134,45 +139,45 @@ class OneLayerConvNet(object):
 
     def fit( self, train, labels, learning_rate=1e-1, training_epochs=1000 ):
         
-        #check if train data is in batches
+        # check if train data is in batches
         isbatches = len( train.shape ) == 5
-        #in case it is, check if labels are accordingly formatted as well
+        # in case it is, check if labels are accordingly formatted as well
         if isbatches:
             assert labels.shape[0] == train.shape[0]
             assert labels.shape[1] == train.shape[1]
        
-        #shared variables for theano training
+        # shared variables for theano training
         train_x = theano.shared( value=np.array( train, dtype=theano.config.floatX ), name='train_x' )
         train_y = T.cast( theano.shared( value=np.array( labels ), name='train_y' ), 'int32' )
         
-        #y is the label vector
+        # y is the label vector
         y = T.ivector('y')
-        #l_rate is the theano object for the learning rate,
+        # l_rate is the theano object for the learning rate,
         l_rate = T.scalar('l_rate')
-        #get the cost and update expressions for training
+        # get the cost and update expressions for training
         cost,updates = self.get_cost_and_updates( y, learning_rate=l_rate )
         err = self.get_errors( self.data,  y )
 
-        #mini-batch sgd
+        # mini-batch sgd
         if isbatches:
-            #number of batches
+            # number of batches
             nbatches = train.shape[0]
-            #batch index
+            # batch index
             index = T.iscalar('index')
-            #inputs are the index of the batch and the learning rate
+            # inputs are the index of the batch and the learning rate
             inputs = [index,theano.Param(l_rate, default=0.1)]
-            #train_conv_net is the theano function that updates the conv_net parameters
-            #and outputs the cost
+            # train_conv_net is the theano function that updates the conv_net parameters
+            # and outputs the cost
             train_conv_net = theano.function(inputs = inputs, outputs = cost, updates=updates,
                                 givens=[(y,train_y[index]),(self.data,train_x[index])] )
-            #errors gives the errors on the batch
+            # errors gives the errors on the batch
             errors = theano.function([index], err,
                                 givens=[(y,train_y[index]),(self.data,train_x[index])] )
             
             costs = []
             for i in xrange(training_epochs):
-                c = []#costs in batch
-                e = []#errors in batch
+                c = []# costs in batch
+                e = []# errors in batch
                 epoch_time = time.time()
                 
                 for j in xrange( nbatches ):
@@ -189,18 +194,18 @@ class OneLayerConvNet(object):
                 rel_cost_change = (costs[0]-np.mean(costs))/np.abs(costs[0])
 
                 if i > 15:
-                    #after a certain number of iterations, if
-                    #the costs is changing too quickly or is increasing,
-                    #reduce the learning rate by .85
+                    # after a certain number of iterations, if
+                    # the costs is changing too quickly or is increasing,
+                    # reduce the learning rate by .85
                     if np.abs(rel_cost_change) > tol_high or rel_cost_change > 0.0:
                         learning_rate = .85*learning_rate
 
-                    #otherwise, if the costs are diminishing too slowly,
-                    #increase the learning rate by 1.1
+                    # otherwise, if the costs are diminishing too slowly,
+                    # increase the learning rate by 1.1
                     if np.abs(rel_cost_change) < tol_low and rel_cost_change < 0.0:
                         learning_rate = 1.1*learning_rate
                     
-                    #if costs is changing less than the tolerance, stop, learning is done
+                    # if costs is changing less than the tolerance, stop, learning is done
                     if np.abs(rel_cost_change) < tolerance:
                         break
 
@@ -224,46 +229,59 @@ class OneLayerConvNet(object):
                 rel_cost_change = (costs[0]-np.mean(costs))/np.abs(costs[0])
 
                 if i > 15:
-                    #after a certain number of iterations, if
-                    #the costs is changing too quickly or is increasing,
-                    #reduce the learning rate by .85
+                    # after a certain number of iterations, if
+                    # the costs is changing too quickly or is increasing,
+                    # reduce the learning rate by .85
                     if np.abs(rel_cost_change) > tol_high or rel_cost_change > 0.0:
                         learning_rate = .85*learning_rate
 
-                    #otherwise, if the costs are diminishing too slowly,
-                    #increase the learning rate by 1.1
+                    # otherwise, if the costs are diminishing too slowly,
+                    # increase the learning rate by 1.1
                     if np.abs(rel_cost_change) < tol_low and rel_cost_change < 0.0:
                         learning_rate = 1.1*learning_rate
                     
-                    #if costs is changing less than the tolerance, stop, learning is done
+                    # if costs is changing less than the tolerance, stop, learning is done
                     if np.abs(rel_cost_change) < tolerance:
                         break
 
-
-    def fit_parallel( self, train, labels, learning_rate=1e-3, training_epochs=100 ):
+    def fit_parallel( self, train, labels, 
+                        learning_rate=1e-3, 
+                        training_epochs=100, 
+                        ip_profile='bryonia' ):
         y = T.ivector('y')
         x = T.tensor4('x')            
         index = T.iscalar('index')
     
-        #non-shared variables for distributed stuffs
+        # non-shared variables for distributed stuffs
         W1 = T.tensor4('W1')
         b1 = T.dvector('b1')
         W2 = T.dmatrix('W2')
         b2 = T.dvector('b2')
 
-        #numpy holders for the values of the parameters
+        # numpy holders for the values of the parameters
         np_W1 = self.W.get_value()
         np_b1 = self.b.get_value()
         np_W2 = self.logreg.W.get_value()
         np_b2 = self.logreg.b.get_value()
 
-        hidden = T.nnet.sigmoid( conv.conv2d( x, W1, image_shape=self.image_shape,
+        hidden = rect( conv.conv2d( x, W1,
+                                     image_shape=self.image_shape,
                                      filter_shape=self.filter_shape ) + \
                                      b1.dimshuffle('x',0,'x','x') ).flatten(2)
 
-        probs = T.nnet.softmax( T.dot( hidden, W2 ) + b2 )
+        rng = T.shared_randomstreams.RandomStreams(
+                    np.random.randint(1e8) )
+        drop_out = rng.binomial( n=1, p=0.5,size=hidden.shape )
+        drop_out_hidden = drop_out*hidden
 
-        negLL = -T.mean( T.log( probs[ T.arange( y.shape[0] ), y] ) )
+        probs = T.nnet.softmax( T.dot( hidden, W2 )/2 + b2 )
+        drop_out_probs = T.nnet.softmax( T.dot( drop_out_hidden, W2 ) + b2 )
+
+        negLL = -T.mean( T.log( drop_out_probs[ T.arange( y.shape[0] ), y] ) )
+
+        preds = T.argmax( probs, axis = 0 )
+
+        errors = T.mean( T.neq( preds, y ) )
 
         grs = T.grad( negLL, [W1,b1,W2,b2] )
 
@@ -271,6 +289,7 @@ class OneLayerConvNet(object):
 
         grads = theano.function( [ index, x, y, W1, b1, W2, b2 ], outputs )
 
+        err = theano.function( [x, y, W1, b1, W2, b2], errors )
 
         nbatches = train.shape[0]
       
@@ -282,21 +301,21 @@ class OneLayerConvNet(object):
        
 
         try:
-            c = Client()
+            c = Client(profile=ip_profile)
             dview = c[:]
             with dview.sync_imports():
                 import os
             dview.execute("os.environ['MLK_NUM_THREADS']='1'").get()
-            dview = c.load_balanced_view()
-            print 'loaded load_balanced_view with %d nodes, life is good.\nContinuing with parallel training\n'%len(c.ids)
+            print 'loaded load_balanced_view with %d nodes, life is good.'%len(c.ids)
+            print 'Continuing with parallel training\n'
         except:
             print 'could not load direct view from ipcluster...'
             print 'falling back on serial training.'
-            self.fit(train,labels)
+            self.fit(train,labels, learning_rate=learning_rate, training_epochs=training_epochs)
             return
         
-        xbatches = [ np.array( train[i], dtype=theano.config.floatX ) for i in range(train.shape[0])]
-        ybatches = [ np.array( labels[i], dtype='int32')  for i in range(train.shape[0])]
+        train = np.array( train, dtype=theano.config.floatX)
+        labels = np.array( labels, dtype='int32')
 
         gradients = {}
         
@@ -304,95 +323,118 @@ class OneLayerConvNet(object):
         gradients['W2'] = [np.zeros_like(np_W2)]*nbatches
         gradients['b1'] = [np.zeros_like(np_b1)]*nbatches
         gradients['b2'] = [np.zeros_like(np_b2)]*nbatches
-        
+        d = {'np_W1':np_W1,'np_W2':np_W2,'np_b1':np_b1,'np_b2':np_b2}
+      
+        calls = []
+        err_calls = []
+        costs = []
+       
+        def process_result(i):
+            gr = list(i.get(0.0001))
+            batch = gr[0]
+            eng_id = i.metadata['engine_id']
+            gradients['W1'][batch] = gr[2]
+            gradients['b1'][batch] = gr[3]
+            gradients['W2'][batch] = gr[4]
+            gradients['b2'][batch] = gr[5]
+            d['np_W1'] = d['np_W1'] - learning_rate*np.mean(gradients['W1'], axis=0)
+            d['np_b1'] = d['np_b1'] - learning_rate*np.mean(gradients['b1'], axis=0)
+            d['np_W2'] = d['np_W2'] - learning_rate*np.mean(gradients['W2'], axis=0)
+            d['np_b2'] = d['np_b2'] - learning_rate*np.mean(gradients['b2'], axis=0)
+            costs.append(gr[1])
+
+            if n_calls<training_epochs*nbatches: 
+                #c[eng_id].results.clear()
+                calls.append(
+                        c[eng_id].apply( grads, batch, train[batch], labels[batch],\
+                                        d['np_W1'],d['np_b1'],d['np_W2'],d['np_b2'])
+                        )
+        def print_results( epoch_time, n_calls, nbatches ):
+            if n_calls%nbatches == 0 and n_calls/nbatches > 1:
+                print 'printing results'
+                old_time = epoch_time
+                epoch_time = time.time()
+                errs = c[:].map( errors,
+                                   [train[i] for i in range(train.shape[0])],
+                                   [labels[i] for i in range(labels.shape[0])],
+                                   [d['np_W1']]*labels.shape[0],
+                                   [d['np_b1']]*labels.shape[0],
+                                   [d['np_W2']]*labels.shape[0],
+                                   [d['np_b2']]*labels.shape[0]).get()
+                ti = epoch_time-old_time
+                old_time = epoch_time
+                epoch_time = time.time()
+                print '''Training epoch %d, cost %lf, time %lf, '''%(n_calls/nbatches,np.mean(costs),ti),
+                print '''errors %lf, calls waiting %d'''%(np.mean( errs ), len(calls))
+                return epoch_time
+            return None
+            
+        def commit_results():
+            self.W.set_value( d['np_W1'] )
+            self.b.set_value(d['np_b1'] )
+            self.logreg.W.set_value(d['np_W2'] )
+            self.logreg.b.set_value(d['np_b2'] )
+             
         try:
             
-            calls = []
-            costs = []
             n_calls = 0
-
             n_cores = len(c.ids)
-
             for i in range(nbatches):
                 core = c.ids[ i % n_cores ]
                 calls.append(
-                        c[ core ].apply(grads,i,xbatches[i],ybatches[i],np_W1,np_b1,np_W2,np_b2)
+                        c[ core ].apply(grads,i,train[i],labels[i],
+                                        np_W1,np_b1,np_W2,np_b2)
                         )
                 n_calls += 1
             epoch_time= time.time()
             while True:
-              
+                new_time = None
                 for n,i in enumerate(calls):
-
-                    try:
-                        gr = i.get(0.0001) 
-                        eng_id = i.metadata['engine_id']
-                        gradients['W1'][gr[0]] = gr[2]
-                        gradients['b1'][gr[0]] = gr[3]
-                        gradients['W2'][gr[0]] = gr[4]
-                        gradients['b2'][gr[0]] = gr[5]
-
-                        np_W1 = np_W1 - learning_rate*np.mean(gradients['W1'], axis=0)
-                        np_b1 = np_b1 - learning_rate*np.mean(gradients['b1'], axis=0)
-                        np_W2 = np_W2 - learning_rate*np.mean(gradients['W2'], axis=0)
-                        np_b2 = np_b2 - learning_rate*np.mean(gradients['b2'], axis=0)
-
-                        calls = calls[:n]+calls[(n+1):]
-
-                        batch = gr[0]
-                        if n_calls<training_epochs*nbatches: 
-                            calls.append(
-                                    c[eng_id].apply( grads, batch, xbaches[batch], ybatches[batch],\
-                                                    np_W1, np_b1, np_W2, np_b2)
-                                    )
-                       
-                        n_calls +=1  
-                        costs = [gr[1]]+costs
-                        costs = costs[:2*nbatches]
-                         
-                    except TimeoutError:
-                        continue
-               
-                    except:
-                        print 'wat?'
-                        print sys.exc_info()
-        
-                    if (n_calls % nbatches) == 0 and n_calls>2*nbatches:
-                        old_time = epoch_time
-                        epoch_time = time.time()
-                        print 'Training epoch %d, cost %lf, time %lf, calls waiting %d\n'%\
-                                (n_calls/nbatches,np.mean(costs),epoch_time-old_time, len(calls))
+                    if i.ready():
+                        process_result(i)
+                        calls.remove(i)
+                        costs = costs[-2*nbatches:]
+                        n_calls +=1
+                #if n_calls > 2*nbatches:
+                new_time = print_results( epoch_time, n_calls, nbatches )
+                if new_time is not None:
+                    epoch_time = new_time
+                    commit_results()
+                if n_calls/nbatches > training_epochs:
+                    break
 
         except KeyboardInterrupt:
             print 'You interrupted training! No probs...'
             print 'Setting values of shared variables'
             dview.abort()
-            #set self.parameters to learned values
-            self.W.set_value( np_W1 )
-            self.b.set_value( np_b1 )
-            self.logreg.W.set_value( np_W2 )
-            self.logreg.b.set_value( np_b2 )
+            # set self.parameters to learned values
+            commit_results()
+        except MemoryError:
+            hp = hpy().heap()
+            with open('debug','w') as fi:
+                for i in range(len(hp)):
+                    fi.write(str(hp[i]))
 
-        except:
-            print 'Apparently some Engines died, retrying training for remaining %d epochs!'%\
-                    ( training_epochs - int(n_calls/nbatches) )
-            print 'Error was'
-            print sys.exc_info()
+
+        except (RemoteError, EngineError, CompositeError):
+            epoch = int(n_calls/nbatches)
+            print 'Apparently some Engines died',
+            print ' retrying training for remaining %d epochs!'%\
+                    ( training_epochs - epoch )
             
             dview.abort()
-            #saving intermediate results
-            self.W.set_value( np_W1 )
-            self.b.set_value( np_b1 )
-            self.logreg.W.set_value( np_W2 )
-            self.logreg.b.set_value( np_b2 )
+            dview.purge_results('all')
+            dview.results.clear()
+            dview.clear()
+            # saving intermediate results
+            commit_results()
             
-            self.fit_parallel( train, labels, learning_rate=learning_rate, training_epochs=training_epochs-epoch )
+            self.fit_parallel( train, labels,
+                               learning_rate=learning_rate,
+                               training_epochs=training_epochs-epoch )
         
-        #set self.parameters to learned values
-        self.W.set_value( np_W1 )
-        self.b.set_value( np_b1 )
-        self.logreg.W.set_value( np_W2 )
-        self.logreg.b.set_value( np_b2 )
+        # set self.parameters to learned values
+        commit_results()
 
 
 if __name__ == '__main__':
@@ -401,12 +443,19 @@ if __name__ == '__main__':
 
     labels, train, test = pp.load_from_csv( sys.argv[1], sys.argv[2] )
 
-    #set values to something useful, batch_size and number of epochs
+    if len(sys.argv)>=4:
+        ip_profile = sys.argv[4]
+        print 'using profile %s for ipcluster'%ip_profile
+    else:
+        print 'using bryonia as default ipcluster...'
+        ip_profile='bryonia'
+
+    # set values to something useful, batch_size and number of epochs
     # doesn't seem to make much of a difference
     training_epochs = 300
     training_batches = 100
 
-    #patch_size, for 28x28 images, 10x10 patches seemed reasonable
+    # patch_size, for 28x28 images, 10x10 patches seemed reasonable
     patch_size = 15
 
     batch_size = int(train.shape[0] / training_batches)
@@ -426,7 +475,7 @@ if __name__ == '__main__':
         patches = pp.make_patches( train, patch_size = patch_size)
         print "generated patches"
         
-        #Creates a denoising autoencoder with 500 hidden nodes,
+        # Creates a denoising autoencoder with 500 hidden nodes,
         # could be changed as well
         a = autoencoder.dA( patch_size**2, n_filters)
         a.fit(patches[:10000], training_epochs = 1000, verbose=True)
@@ -449,17 +498,17 @@ if __name__ == '__main__':
         [W_ae, b_ae] = pic.load(fi)
         fi.close()
 
-    #conv_net parameters
+    # conv_net parameters
     filter_shape = (n_filters, 1, patch_size, patch_size)
     image_shape = (1000, 1, 28, 28)
     
-    #reshape ae matrices for conv.conv2d function
+    # reshape ae matrices for conv.conv2d function
     W_ae = np.reshape(W_ae, (n_filters, 1, patch_size, patch_size))
     b_ae = np.reshape(b_ae, (n_filters,))
 
-    #reshaping inputs for conv_net
-    #data_conv = inp.reshape((batch_size, 1, 28, 28))
-    #data_val_conv = val_inp.reshape(validation_shape)
+    # reshaping inputs for conv_net
+    # data_conv = inp.reshape((batch_size, 1, 28, 28))
+    # data_val_conv = val_inp.reshape(validation_shape)
 
     try:
         f = open('temp_pickle_conv_net_params.pkl','rb')
@@ -472,22 +521,29 @@ if __name__ == '__main__':
         print 'Loaded params %s from file %s'%(str(my_params.keys()),f.name)
 
     except Exception as inst:
-        print type(inst)
         print 'no params backup found'
         conv_net = OneLayerConvNet(filter_shape, image_shape,
                                    filters_init=W_ae, bias_init=b_ae)
-    #cbuild conv_net
-    #conv_net.image_shape = (500,1,28,28)
-    #conv_net.pretrain_logreg( train[:4000].reshape((8,500,1,28,28)), np.array(labels[:4000]).reshape((8,500)), (4,500,1,28,28) )
-    #conv_net.fit( train.reshape((42,1000,1,28,28)), labels.reshape((42,1000)), learning_rate=1e-4, training_epochs=50 )
-    conv_net.image_shape = (1000,1,28,28)
-    try:
-        conv_net.fit_parallel(train.reshape((42,1000,1,28,28)), labels.reshape((42,1000)), learning_rate=1e-3, training_epochs=400)
-        preds = conv_net.predict( test )
-        pp.print_preds_to_csv( preds, sys.argv[3] )
 
-    except:
-        print sys.exc_info()
+    try:
+        conv_net.fit_parallel(train.reshape((42,1000,1,28,28)), 
+                              labels.reshape((42,1000)),
+                              learning_rate=1e-4, training_epochs=100,
+                              ip_profile=ip_profile)
+        preds = []
+        test = test.reshape((test.shape[0]/1000,1000,1,28,28))
+        print 'Computing test predictions'
+        for n,t in enumerate(test):
+            print 'batch %d out of %d'%(n,test.shape[0])
+            preds = preds+ list(conv_net.predict( t ))
+        pp.print_preds_to_csv( preds, sys.argv[3] )
+        print 'Saving parameters to pickle'
+        params = conv_net.get_params()
+        with open('temp_pickle_conv_net_params.pkl','wb') as f:
+            pic.dump(params,f)
+
+    except Exception as e:
+        print 'Exception info: ',sys.exc_info()
         print 'OK dumping last params to pickle'
         params = conv_net.get_params()
         with open('temp_pickle_conv_net_params.pkl','wb') as f:

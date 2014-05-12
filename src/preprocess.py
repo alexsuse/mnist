@@ -18,9 +18,9 @@ import numpy as np
 
 
 def print_preds_to_csv( preds, filename ):
-    with csv.writer( open( filename, 'wb' ) ) as writer:
-        for i in xrange(preds.shape[0]):
-            writer.writerow([i,preds[i]])
+    writer = csv.writer( open( filename, 'wb') )
+    for i in xrange(len(preds)):
+        writer.writerow([i,preds[i]])
 
 def load_from_csv( train_file , test_file ):
 
